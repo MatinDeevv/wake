@@ -1,8 +1,17 @@
 "use client";
+export const dynamic = "force-dynamic";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
+// HARD CODED USERS FOR LOGIN ONLY
+const HARDCODED_USERS = [
+  { username: "saman", password: "1234" },
+  { username: "dan", password: "1233" },
+  { username: "matin", password: "9999" },
+];
+
+// SUPABASE CLIENT
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON!
@@ -11,153 +20,160 @@ const supabase = createClient(
 export default function Page() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+
   const [user, setUser] = useState<any>(null);
-  const [friends, setFriends] = useState<any[]>([]);
+  const [streaks, setStreaks] = useState<any>({});
   const [msg, setMsg] = useState("");
 
-  // load session
+  // Load session
   useEffect(() => {
-    const u = localStorage.getItem("user");
-    if (u) {
-      const parsed = JSON.parse(u);
-      setUser(parsed);
-      loadFriends();
+    const saved = JSON.parse(localStorage.getItem("user") || "null");
+    if (saved) {
+      setUser(saved);
+      loadStreaks();
     }
   }, []);
-async function login() {
-  const u = username.trim();
-  const p = password.trim();
 
-  console.log("trying login:", u, p);
+  // LOGIN USING HARDCODED LIST
+  function login() {
+    const u = username.trim();
+    const p = password.trim();
 
-  // Query only by username first
-  let { data, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("username", u)
-    .maybeSingle();
+    const found = HARDCODED_USERS.find(
+      (usr) => usr.username === u && usr.password === p
+    );
 
-  console.log("db returned:", data, error);
+    if (!found) {
+      setMsg("wrong username or password 💀");
+      return;
+    }
 
-  if (error || !data) {
-    setMsg("user not found 💀");
-    return;
+    setUser(found);
+    localStorage.setItem("user", JSON.stringify(found));
+    loadStreaks();
   }
 
-  // Manual password check (avoids Supabase comparison issues)
-  if (data.password !== p) {
-    setMsg("wrong password 🔒");
-    return;
+  // LOAD STREAKS FROM SUPABASE (FALLBACK TO LOCAL)
+  async function loadStreaks() {
+    try {
+      let { data, error } = await supabase.from("users").select("*");
+
+      if (error || !data) {
+        console.log("supabase failed, fallback local");
+        const local = JSON.parse(localStorage.getItem("streaks") || "{}");
+        setStreaks(local);
+        return;
+      }
+
+      const mapped: any = {};
+      data.forEach((row) => {
+        mapped[row.username] = {
+          streak: row.streak,
+          last: row.last_checkin,
+          id: row.id,
+        };
+      });
+
+      setStreaks(mapped);
+      localStorage.setItem("streaks", JSON.stringify(mapped));
+    } catch (e) {
+      console.log("supabase crash, fallback local");
+      const local = JSON.parse(localStorage.getItem("streaks") || "{}");
+      setStreaks(local);
+    }
   }
 
-  setUser(data);
-  localStorage.setItem("user", JSON.stringify(data));
-  loadFriends();
-}
-
-  
-
-  async function loadFriends() {
-    let { data } = await supabase
-      .from("users")
-      .select("*")
-      .order("streak", { ascending: false });
-
-    if (data) setFriends(data);
-  }
-
+  // CHECK-IN LOGIC
   async function checkIn() {
-    if (!user) return;
-
     const now = new Date();
     const hour = now.getHours();
-
-    if (hour < 5 || hour >= 6) {
-      setMsg("Only allowed to check in 5–6am 😭");
-      return;
-    }
-
     const today = now.toISOString().slice(0, 10);
 
-    let { data: fresh } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-
-    let streak = fresh.streak;
-
-    if (fresh.last_checkin === today) {
-      setMsg("Already checked in today 😭");
+    if (hour < 5 || hour >= 6) {
+      setMsg("you can only check in 5–6 AM 😭");
       return;
     }
 
-    // compute yesterday
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    const ystr = y.toISOString().slice(0, 10);
+    const current = streaks[user.username] || {
+      streak: 0,
+      last: "",
+      id: null,
+    };
 
-    if (fresh.last_checkin === ystr) {
-      streak += 1;
-    } else {
-      streak = 1;
+    if (current.last === today) {
+      setMsg("already checked in today 💀");
+      return;
     }
 
-    await supabase
-      .from("users")
-      .update({ streak, last_checkin: today })
-      .eq("id", user.id);
+    // Calculate new streak
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const y = yesterday.toISOString().slice(0, 10);
 
-    setMsg("Checked in! 🔥 Streak: " + streak);
+    const newStreak = current.last === y ? current.streak + 1 : 1;
 
-    // update state
-    const updatedUser = { ...user, streak, last_checkin: today };
-    setUser(updatedUser);
-    localStorage.setItem("user", JSON.stringify(updatedUser));
+    // Update local
+    const updated = {
+      ...streaks,
+      [user.username]: {
+        streak: newStreak,
+        last: today,
+        id: current.id,
+      },
+    };
 
-    loadFriends();
+    setStreaks(updated);
+    localStorage.setItem("streaks", JSON.stringify(updated));
+
+    setMsg("checked in 🔥 streak = " + newStreak);
+
+    // Push to Supabase if user exists in DB
+    if (current.id) {
+      await supabase
+        .from("users")
+        .update({ streak: newStreak, last_checkin: today })
+        .eq("id", current.id);
+    }
   }
 
-  // ---- UI ----
-
-  const containerStyle: any = {
+  // UI STYLES
+  const container = {
     fontFamily: "sans-serif",
-    padding: "30px",
+    padding: "24px",
     maxWidth: "400px",
     margin: "0 auto",
   };
 
-  const card: any = {
-    padding: "12px",
+  const card = {
     border: "1px solid #ddd",
+    padding: "16px",
     borderRadius: "8px",
-    marginBottom: "12px",
+    marginBottom: "20px",
   };
 
   if (!user) {
-    // ----- LOGIN SCREEN -----
     return (
-      <div style={containerStyle}>
-        <h1 style={{ marginBottom: "20px" }}>Wake Up Streak</h1>
+      <div style={container}>
+        <h1>Wake-Up Streak</h1>
 
         <div style={card}>
           <input
             placeholder="username"
             onChange={(e) => setUsername(e.target.value)}
-            style={{ width: "100%", padding: "8px", marginBottom: "10px" }}
+            style={{ width: "100%", padding: 8, marginBottom: 10 }}
           />
           <input
             placeholder="password"
             type="password"
             onChange={(e) => setPassword(e.target.value)}
-            style={{ width: "100%", padding: "8px", marginBottom: "10px" }}
+            style={{ width: "100%", padding: 8, marginBottom: 10 }}
           />
 
           <button
             onClick={login}
             style={{
               width: "100%",
-              padding: "10px",
+              padding: 10,
               background: "#ccc",
               border: "none",
               cursor: "pointer",
@@ -166,70 +182,56 @@ async function login() {
             Login
           </button>
 
-          {msg && <p style={{ marginTop: "10px", color: "red" }}>{msg}</p>}
+          {msg && <p style={{ color: "red", marginTop: 10 }}>{msg}</p>}
         </div>
       </div>
     );
   }
 
-  // ----- DASHBOARD -----
+  const leaderboard = Object.entries(streaks)
+    .map(([username, data]: any) => ({
+      username,
+      streak: data.streak,
+    }))
+    .sort((a, b) => b.streak - a.streak);
+
   return (
-    <div style={containerStyle}>
+    <div style={container}>
       <h1>Hi {user.username}</h1>
 
-      <div style={{ ...card, background: "#f9fff9" }}>
-        <p>Your current streak: <b>{user.streak}</b></p>
+      <div style={card}>
+        <p>Your streak: <b>{streaks[user.username]?.streak || 0}</b></p>
         <button
           onClick={checkIn}
           style={{
             width: "100%",
-            padding: "10px",
-            marginTop: "8px",
+            padding: 10,
             background: "lightgreen",
             border: "1px solid #333",
-            cursor: "pointer",
           }}
         >
           Check In
         </button>
-        {msg && <p style={{ marginTop: "10px" }}>{msg}</p>}
+        {msg && <p style={{ marginTop: 10 }}>{msg}</p>}
       </div>
 
-      <h2 style={{ marginTop: "20px" }}>Leaderboard</h2>
-
+      <h2>Leaderboard</h2>
       <div style={card}>
-        {friends.length === 0 && <p>Loading...</p>}
-
-        {friends.map((f, i) => (
+        {leaderboard.map((item, i) => (
           <div
-            key={f.id}
+            key={i}
             style={{
-              padding: "6px 0",
-              borderBottom: "1px solid #eee",
               display: "flex",
               justifyContent: "space-between",
+              padding: "6px 0",
+              borderBottom: "1px solid #eee",
             }}
           >
-            <span>
-              {i + 1}. {f.username}
-            </span>
-            <b>{f.streak}</b>
+            <span>{i + 1}. {item.username}</span>
+            <b>{item.streak}</b>
           </div>
         ))}
       </div>
-
-      <button
-        onClick={loadFriends}
-        style={{
-          width: "100%",
-          padding: "10px",
-          marginTop: "10px",
-          background: "#eee",
-          border: "1px solid #bbb",
-        }}
-      >
-        Refresh Leaderboard
-      </button>
     </div>
   );
 }
