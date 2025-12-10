@@ -24,24 +24,38 @@ export default function Page() {
       loadFriends();
     }
   }, []);
+async function login() {
+  const u = username.trim();
+  const p = password.trim();
 
-  async function login() {
-    let { data, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("username", username)
-      .eq("password", password)
-      .maybeSingle();
+  console.log("trying login:", u, p);
 
-    if (error || !data) {
-      setMsg("wrong username or password 💀");
-      return;
-    }
+  // Query only by username first
+  let { data, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("username", u)
+    .maybeSingle();
 
-    setUser(data);
-    localStorage.setItem("user", JSON.stringify(data));
-    loadFriends();
+  console.log("db returned:", data, error);
+
+  if (error || !data) {
+    setMsg("user not found 💀");
+    return;
   }
+
+  // Manual password check (avoids Supabase comparison issues)
+  if (data.password !== p) {
+    setMsg("wrong password 🔒");
+    return;
+  }
+
+  setUser(data);
+  localStorage.setItem("user", JSON.stringify(data));
+  loadFriends();
+}
+
+  
 
   async function loadFriends() {
     let { data } = await supabase
