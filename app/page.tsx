@@ -15,11 +15,13 @@ export default function Page() {
   const [friends, setFriends] = useState<any[]>([]);
   const [msg, setMsg] = useState("");
 
-  // auto-load saved session
+  // load session
   useEffect(() => {
     const u = localStorage.getItem("user");
     if (u) {
-      setUser(JSON.parse(u));
+      const parsed = JSON.parse(u);
+      setUser(parsed);
+      loadFriends();
     }
   }, []);
 
@@ -32,7 +34,7 @@ export default function Page() {
       .maybeSingle();
 
     if (error || !data) {
-      setMsg("bro wrong creds 💀");
+      setMsg("wrong username or password 💀");
       return;
     }
 
@@ -42,7 +44,11 @@ export default function Page() {
   }
 
   async function loadFriends() {
-    let { data } = await supabase.from("users").select("*").order("streak", { ascending: false });
+    let { data } = await supabase
+      .from("users")
+      .select("*")
+      .order("streak", { ascending: false });
+
     if (data) setFriends(data);
   }
 
@@ -53,24 +59,22 @@ export default function Page() {
     const hour = now.getHours();
 
     if (hour < 5 || hour >= 6) {
-      setMsg("not check-in time (5–6am) 🤦‍♂️");
+      setMsg("Only allowed to check in 5–6am 😭");
       return;
     }
 
     const today = now.toISOString().slice(0, 10);
 
-    // pull fresh user row
     let { data: fresh } = await supabase
       .from("users")
       .select("*")
       .eq("id", user.id)
       .single();
 
-    let newStreak = fresh.streak;
+    let streak = fresh.streak;
 
-    // already checked in today
     if (fresh.last_checkin === today) {
-      setMsg("already checked in today 😭");
+      setMsg("Already checked in today 😭");
       return;
     }
 
@@ -80,93 +84,138 @@ export default function Page() {
     const ystr = y.toISOString().slice(0, 10);
 
     if (fresh.last_checkin === ystr) {
-      newStreak += 1;
+      streak += 1;
     } else {
-      newStreak = 1;
+      streak = 1;
     }
 
-    // update
     await supabase
       .from("users")
-      .update({ streak: newStreak, last_checkin: today })
+      .update({ streak, last_checkin: today })
       .eq("id", user.id);
 
-    setMsg("checked in 👍 streak: " + newStreak);
+    setMsg("Checked in! 🔥 Streak: " + streak);
+
+    // update state
+    const updatedUser = { ...user, streak, last_checkin: today };
+    setUser(updatedUser);
+    localStorage.setItem("user", JSON.stringify(updatedUser));
+
     loadFriends();
   }
 
+  // ---- UI ----
+
+  const containerStyle: any = {
+    fontFamily: "sans-serif",
+    padding: "30px",
+    maxWidth: "400px",
+    margin: "0 auto",
+  };
+
+  const card: any = {
+    padding: "12px",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    marginBottom: "12px",
+  };
+
   if (!user) {
-    // login screen — ugly af
+    // ----- LOGIN SCREEN -----
     return (
-      <div style={{ padding: 40, fontFamily: "sans-serif" }}>
-        <h1>wakeup streak thingy</h1>
-        <input
-          placeholder="username"
-          style={{ display: "block", marginBottom: 8, padding: 6, border: "1px solid gray" }}
-          onChange={(e) => setUsername(e.target.value)}
-        />
-        <input
-          placeholder="password"
-          type="password"
-          style={{ display: "block", marginBottom: 8, padding: 6, border: "1px solid gray" }}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <button
-          onClick={login}
-          style={{
-            padding: 10,
-            background: "#ccc",
-            border: "none",
-            cursor: "pointer",
-            marginTop: 4,
-          }}
-        >
-          login
-        </button>
-        <p>{msg}</p>
+      <div style={containerStyle}>
+        <h1 style={{ marginBottom: "20px" }}>Wake Up Streak</h1>
+
+        <div style={card}>
+          <input
+            placeholder="username"
+            onChange={(e) => setUsername(e.target.value)}
+            style={{ width: "100%", padding: "8px", marginBottom: "10px" }}
+          />
+          <input
+            placeholder="password"
+            type="password"
+            onChange={(e) => setPassword(e.target.value)}
+            style={{ width: "100%", padding: "8px", marginBottom: "10px" }}
+          />
+
+          <button
+            onClick={login}
+            style={{
+              width: "100%",
+              padding: "10px",
+              background: "#ccc",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            Login
+          </button>
+
+          {msg && <p style={{ marginTop: "10px", color: "red" }}>{msg}</p>}
+        </div>
       </div>
     );
   }
 
-  // dashboard
+  // ----- DASHBOARD -----
   return (
-    <div style={{ padding: 40, fontFamily: "sans-serif" }}>
-      <h1>hi {user.username}</h1>
+    <div style={containerStyle}>
+      <h1>Hi {user.username}</h1>
 
-      <button
-        onClick={checkIn}
-        style={{
-          padding: 10,
-          background: "lightgreen",
-          border: "1px solid #333",
-          cursor: "pointer",
-        }}
-      >
-        check in
-      </button>
-
-      <p>{msg}</p>
-
-      <h2>leaderboard (mid ui)</h2>
-      <button
-        onClick={loadFriends}
-        style={{ padding: 6, background: "#eee", marginBottom: 10 }}
-      >
-        refresh
-      </button>
-
-      {friends.map((f) => (
-        <div
-          key={f.id}
+      <div style={{ ...card, background: "#f9fff9" }}>
+        <p>Your current streak: <b>{user.streak}</b></p>
+        <button
+          onClick={checkIn}
           style={{
-            border: "1px solid #ddd",
-            marginBottom: 6,
-            padding: 6,
+            width: "100%",
+            padding: "10px",
+            marginTop: "8px",
+            background: "lightgreen",
+            border: "1px solid #333",
+            cursor: "pointer",
           }}
         >
-          {f.username}: {f.streak}
-        </div>
-      ))}
+          Check In
+        </button>
+        {msg && <p style={{ marginTop: "10px" }}>{msg}</p>}
+      </div>
+
+      <h2 style={{ marginTop: "20px" }}>Leaderboard</h2>
+
+      <div style={card}>
+        {friends.length === 0 && <p>Loading...</p>}
+
+        {friends.map((f, i) => (
+          <div
+            key={f.id}
+            style={{
+              padding: "6px 0",
+              borderBottom: "1px solid #eee",
+              display: "flex",
+              justifyContent: "space-between",
+            }}
+          >
+            <span>
+              {i + 1}. {f.username}
+            </span>
+            <b>{f.streak}</b>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={loadFriends}
+        style={{
+          width: "100%",
+          padding: "10px",
+          marginTop: "10px",
+          background: "#eee",
+          border: "1px solid #bbb",
+        }}
+      >
+        Refresh Leaderboard
+      </button>
     </div>
   );
 }
